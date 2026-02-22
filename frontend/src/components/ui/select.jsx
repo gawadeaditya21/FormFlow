@@ -6,9 +6,26 @@ export const Select = ({ children, value, onValueChange }) => {
 
   return (
     <div className="relative">
-      {React.Children.map(children, child =>
-        React.cloneElement(child, { value, onValueChange, open, setOpen })
-      )}
+      {React.Children.map(children, child => {
+        if (child.type === SelectContent) {
+          return React.cloneElement(child, {
+            value,
+            onValueChange,
+            open,
+            setOpen,
+          });
+        }
+
+        if (child.type === SelectTrigger) {
+          return React.cloneElement(child, {
+            value,
+            open,
+            setOpen,
+          });
+        }
+
+        return child;
+      })}
     </div>
   );
 };
