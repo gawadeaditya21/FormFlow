@@ -1,33 +1,35 @@
-// models/Form.js
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
+import { customAlphabet } from 'nanoid';
 
-const formSchema = new mongoose.Schema({
-  owner: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "User",
-    required: true,
-  },
-  title: {
-    type: String, 
-    default: 'Untitled Form'
-  },
-  isPublished: {
-    type: Boolean,
-    default: false,
-  },
+const nanoid = customAlphabet('0123456789abcdefghijklmnopqrstuvwxyz', 8);
 
-  // The Polymorphic Pattern
-  // Using 'Mixed' allows objects in this array to have different shapes
-  // e.g., { type: 'checkbox', options: [...] } vs { type: 'text', placeholder: '...' }
-  fields: [
-    {
-      type: mongoose.Schema.Types.Mixed,
-    },
-  ],
-  createdAt: { 
-    type: Date, 
-    default: Date.now,
-  }
-});
+const OptionSchema = new mongoose.Schema({
+  id: { type: String, required: true },
+  value: { type: String, required: true }
+}, { _id: false });
 
-module.exports = mongoose.model('Form', formSchema);
+const QuestionSchema = new mongoose.Schema({
+  id: { type: String, required: true },
+  type: { type: String, required: true },
+  label: { type: String, default: 'Untitled Question' },
+  required: { type: Boolean, default: false },
+  options: { type: [OptionSchema], default: [] },
+  validation: { type: mongoose.Schema.Types.Mixed, default: {} }
+}, { _id: false });
+
+const FormSchema = new mongoose.Schema({
+  title: { type: String, default: 'Untitled Form' },
+  description: { type: String, default: '' },
+  questions: { type: [QuestionSchema], default: [] },
+  responsesCount: { type: Number, default: 0 },
+  isPublic: { type: Boolean, default: false },
+  shareToken: { type: String, index: true, unique: true, sparse: true },
+}, { timestamps: true });
+
+FormSchema.methods.createShareToken = function () {
+  this.shareToken = nanoid();
+  this.isPublic = true;
+  return this.shareToken;
+};
+
+export default mongoose.model('Form', FormSchema);

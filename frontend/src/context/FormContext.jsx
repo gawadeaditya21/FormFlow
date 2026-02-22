@@ -3,6 +3,31 @@ import { v4 as uuidv4 } from 'uuid';
 
 const FormContext = createContext(undefined);
 
+// --- Server API helpers (Save & Share) ---
+const API_BASE =
+  typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL
+    ? import.meta.env.VITE_API_URL
+    : 'http://localhost:5000/api';
+
+async function apiRequest(path, options = {}) {
+  const res = await fetch(`${API_BASE}${path}`, options);
+  if (!res.ok) {
+    let errMsg = `${res.status} ${res.statusText}`;
+    try {
+      const body = await res.json();
+      errMsg = body.message || JSON.stringify(body);
+    } catch (e) { }
+    const err = new Error(errMsg);
+    err.status = res.status;
+    throw err;
+  }
+  try {
+    return await res.json();
+  } catch (e) {
+    return {};
+  }
+}
+
 const createDefaultQuestion = (type) => {
   const base = {
     id: uuidv4(),
@@ -14,15 +39,12 @@ const createDefaultQuestion = (type) => {
   if (type === 'multiple-choice' || type === 'checkbox' || type === 'dropdown') {
     base.options = [
       { id: uuidv4(), value: 'Option 1' },
+      { id: uuidv4(), value: 'Option 2' },
     ];
   }
 
-  if (type === 'dropdown' && base.options) {
-    base.options = [
-      { id: uuidv4(), value: 'Select an option' },
-      { id: uuidv4(), value: 'Option 1' },
-      { id: uuidv4(), value: 'Option 2' },
-    ];
+  if (type === 'rating') {
+    base.range = { min: 1, max: 5 };
   }
 
   return base;
@@ -30,31 +52,28 @@ const createDefaultQuestion = (type) => {
 
 export const FormProvider = ({ children }) => {
   const [form, setForm] = useState({
-    id: uuidv4(),
     title: 'Untitled Form',
-    description: 'Add a description for your form',
+    description: '',
     questions: [],
-    createdAt: new Date(),
-    updatedAt: new Date(),
   });
 
-  const [isPreviewMode, setIsPreviewMode] = useState(false);
   const [activeQuestionId, setActiveQuestionId] = useState(null);
+  const [isPreviewMode, setIsPreviewMode] = useState(false);
   const [themeColor, setThemeColor] = useState('blue');
 
   const updateFormTitle = useCallback((title) => {
-    setForm(prev => ({ ...prev, title, updatedAt: new Date() }));
+    setForm((prev) => ({ ...prev, title, updatedAt: new Date() }));
   }, []);
 
   const updateFormDescription = useCallback((description) => {
-    setForm(prev => ({ ...prev, description, updatedAt: new Date() }));
+    setForm((prev) => ({ ...prev, description, updatedAt: new Date() }));
   }, []);
 
   const addQuestion = useCallback((type, index) => {
     const newQuestion = createDefaultQuestion(type);
-    setForm(prev => {
+    setForm((prev) => {
       const questions = [...prev.questions];
-      if (index !== undefined) {
+      if (typeof index === 'number') {
         questions.splice(index, 0, newQuestion);
       } else {
         questions.push(newQuestion);
@@ -73,18 +92,9 @@ export const FormProvider = ({ children }) => {
       validation: smartField.config.validation,
     };
 
-    if (smartField.id === 'gender') {
-      newQuestion.options = [
-        { id: uuidv4(), value: 'Male' },
-        { id: uuidv4(), value: 'Female' },
-        { id: uuidv4(), value: 'Non-binary' },
-        { id: uuidv4(), value: 'Prefer not to say' },
-      ];
-    }
-
-    setForm(prev => {
+    setForm((prev) => {
       const questions = [...prev.questions];
-      if (index !== undefined) {
+      if (typeof index === 'number') {
         questions.splice(index, 0, newQuestion);
       } else {
         questions.push(newQuestion);
@@ -94,57 +104,112 @@ export const FormProvider = ({ children }) => {
     setActiveQuestionId(newQuestion.id);
   }, []);
 
-  const updateQuestion = useCallback((id, updates) => {
-    setForm(prev => ({
-      ...prev,
-      questions: prev.questions.map(q =>
-        q.id === id ? { ...q, ...updates } : q
-      ),
-      updatedAt: new Date(),
-    }));
+  const updateQuestion = useCallback((id, patch) => {
+    setForm((prev) => {
+      const questions = prev.questions.map((q) => (q.id === id ? { ...q, ...patch } : q));
+      return { ...prev, questions, updatedAt: new Date() };
+    });
   }, []);
 
   const deleteQuestion = useCallback((id) => {
-    setForm(prev => ({
-      ...prev,
-      questions: prev.questions.filter(q => q.id !== id),
-      updatedAt: new Date(),
-    }));
+    setForm((prev) => {
+      const questions = prev.questions.filter((q) => q.id !== id);
+      return { ...prev, questions, updatedAt: new Date() };
+    });
     setActiveQuestionId(null);
   }, []);
 
   const duplicateQuestion = useCallback((id) => {
-    setForm(prev => {
-      const questionIndex = prev.questions.findIndex(q => q.id === id);
-      if (questionIndex === -1) return prev;
-
-      const original = prev.questions[questionIndex];
-      const duplicate = {
+    setForm((prev) => {
+      const idx = prev.questions.findIndex((q) => q.id === id);
+      if (idx === -1) return prev;
+      const original = prev.questions[idx];
+      const copy = {
         ...original,
         id: uuidv4(),
-        options: original.options?.map(opt => ({ ...opt, id: uuidv4() })),
+        label: `${original.label} (copy)`,
+        options: original.options?.map((opt) => ({ ...opt, id: uuidv4() })),
       };
-
       const questions = [...prev.questions];
-      questions.splice(questionIndex + 1, 0, duplicate);
+      questions.splice(idx + 1, 0, copy);
       return { ...prev, questions, updatedAt: new Date() };
     });
   }, []);
 
-  const reorderQuestions = useCallback((activeId, overId) => {
-    setForm(prev => {
-      const oldIndex = prev.questions.findIndex(q => q.id === activeId);
-      const newIndex = prev.questions.findIndex(q => q.id === overId);
-      
-      if (oldIndex === -1 || newIndex === -1) return prev;
-
+  const reorderQuestions = useCallback((from, to) => {
+    setForm((prev) => {
       const questions = [...prev.questions];
-      const [removed] = questions.splice(oldIndex, 1);
-      questions.splice(newIndex, 0, removed);
-      
+      const [moved] = questions.splice(from, 1);
+      questions.splice(to, 0, moved);
       return { ...prev, questions, updatedAt: new Date() };
     });
   }, []);
+
+  // Save & Share states
+  const [isSaving, setIsSaving] = useState(false);
+  const [isPublishing, setIsPublishing] = useState(false);
+
+  const saveFormToServer = useCallback(async () => {
+    setIsSaving(true);
+    try {
+      const payload = {
+        title: form.title,
+        description: form.description,
+        questions: form.questions,
+      };
+      // decide create or update
+      if (form._id) {
+        const res = await apiRequest(`/forms/${form._id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        setForm((prev) => ({ ...prev, _id: res._id || res.id || prev._id, updatedAt: res.updatedAt || new Date() }));
+        return res;
+      } else {
+        const res = await apiRequest(`/forms`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        setForm((prev) => ({ ...prev, _id: res._id || res.id || prev._id, updatedAt: res.updatedAt || new Date() }));
+        return res;
+      }
+    } catch (err) {
+      console.error('saveFormToServer error', err);
+      throw err;
+    } finally {
+      setIsSaving(false);
+    }
+  }, [form]);
+
+  const shareForm = useCallback(async () => {
+    setIsPublishing(true);
+    try {
+      let id = form._id;
+
+      // If not saved yet → save first and capture returned id
+      if (!id) {
+        const saved = await saveFormToServer();
+        id = saved?._id || saved?.id;
+      }
+
+      if (!id) {
+        throw new Error("Form ID missing after save.");
+      }
+
+      const res = await apiRequest(`/forms/${id}/publish`, {
+        method: 'POST',
+      });
+
+      return res;
+    } catch (err) {
+      console.error('shareForm error', err);
+      throw err;
+    } finally {
+      setIsPublishing(false);
+    }
+  }, [form, saveFormToServer]);
 
   return (
     <FormContext.Provider
@@ -164,6 +229,11 @@ export const FormProvider = ({ children }) => {
         setActiveQuestionId,
         themeColor,
         setThemeColor,
+        // Save & Share functions
+        saveFormToServer,
+        shareForm,
+        isSaving,
+        isPublishing,
       }}
     >
       {children}
